@@ -50,13 +50,14 @@ class RecommendationScorer:
     def __init__(self, checkouts_df):
         self.checkouts_df = checkouts_df
         self.stemmer = SnowballStemmer('english')
+        self.total_docs = len(checkouts_df)  # Set this FIRST
+        
         self.author_checkout_map = self._build_author_map()
         self.lc_checkout_map = self._build_lc_map()
         
         # NEW: Enhanced subject analysis with TF-IDF weighting
         self.subject_terms = self._extract_subject_terms_enhanced()
         self.term_frequencies = self._calculate_term_frequencies()
-        self.total_docs = len(checkouts_df)
         
     def _build_author_map(self):
         author_map = defaultdict(list)
