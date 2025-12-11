@@ -32,16 +32,8 @@ st.set_page_config(
 
 # Header
 st.title("📚 Library Book Recommendation Scorer")
-st.success("🎯 **Enhanced Version** - Now with improved subject matching!")
 st.markdown("""
 This tool helps you **score and rank book recommendations** based on how well they match your library's checkout history.
-
-### Enhanced Features:
-- ✨ **TF-IDF weighting** - Rare, specific terms weighted higher
-- 📝 **Phrase detection** - Recognizes "machine learning" as one concept
-- 🎯 **Exact match boosting** - Rewards precise subject matches
-- 🔍 **Fuzzy matching** - Handles typos and spelling variations
-- 📊 **Hierarchical weighting** - Primary subjects matter more
 
 ### How it works:
 1. Upload your **checkout history** (CSV with title, author, checkouts, subjects, LC classification)
@@ -52,19 +44,162 @@ This tool helps you **score and rank book recommendations** based on how well th
    - Author popularity (20%)
 """)
 
-# Recommendation Scorer Class (ENHANCED VERSION)
+# Recommendation Scorer Class
 class RecommendationScorer:
     def __init__(self, checkouts_df):
         self.checkouts_df = checkouts_df
         self.stemmer = SnowballStemmer('english')
         self.total_docs = len(checkouts_df)  # Set this FIRST
         
+        # Build semantic groups for related terms
+        self.semantic_groups = self._build_semantic_groups()
+        
         self.author_checkout_map = self._build_author_map()
         self.lc_checkout_map = self._build_lc_map()
         
-        # NEW: Enhanced subject analysis with TF-IDF weighting
+        # Subject analysis with TF-IDF weighting
         self.subject_terms = self._extract_subject_terms_enhanced()
         self.term_frequencies = self._calculate_term_frequencies()
+        
+    def _build_semantic_groups(self):
+        """
+        Build semantic groups of related terms for better matching.
+        Terms in the same group are considered related even if not exact matches.
+        """
+        groups = {
+            # Computer Science & Technology
+            'computer_science': ['comput', 'programm', 'softwar', 'algorithm', 'code', 'coding', 'develop'],
+            'artificial_intelligence': ['artifici', 'intellig', 'machin', 'learn', 'neural', 'network', 
+                                       'deep', 'learn', 'ai', 'ml', 'data', 'scienc'],
+            'data_analytics': ['data', 'analysi', 'analyt', 'statist', 'big', 'data', 'visual', 
+                              'dataset', 'databas', 'queri', 'sql'],
+            'web_internet': ['web', 'internet', 'onlin', 'websit', 'html', 'css', 'javascript', 'digital'],
+            'cybersecurity': ['secur', 'cybersecur', 'hacking', 'encrypt', 'privaci', 'firewal', 'threat'],
+            
+            # Social Sciences
+            'psychology': ['psycholog', 'mental', 'health', 'behavior', 'cognit', 'psychiatr', 'therapy', 
+                          'psychotherapi', 'counsel', 'emotion'],
+            'sociology': ['sociolog', 'social', 'cultur', 'commun', 'society', 'group', 'interact'],
+            'economics': ['econom', 'market', 'trade', 'finance', 'financi', 'busi', 'commerc', 
+                         'capitalist', 'fiscal', 'monetary'],
+            'political_science': ['politic', 'govern', 'policy', 'democrat', 'election', 'vote', 
+                                 'legisl', 'congress', 'parliament'],
+            'anthropology': ['anthropolog', 'cultur', 'ethnic', 'archaeolog', 'human', 'evolut', 'tribal'],
+            
+            # Natural Sciences
+            'biology': ['biolog', 'life', 'scienc', 'organ', 'cell', 'geneti', 'dna', 'evolut', 
+                       'ecolog', 'botani', 'zoolog'],
+            'chemistry': ['chemistri', 'chemic', 'reaction', 'molecul', 'atom', 'compound', 'element'],
+            'physics': ['physic', 'quantum', 'mechan', 'energy', 'force', 'matter', 'motion', 'thermodyn'],
+            'environmental': ['environ', 'climat', 'ecolog', 'sustain', 'conserv', 'green', 'ecosyst', 
+                            'warm', 'carbon', 'pollut'],
+            'astronomy': ['astronomi', 'space', 'planet', 'star', 'galaxi', 'cosmo', 'univers', 'astrophys'],
+            
+            # Mathematics
+            'mathematics': ['mathemat', 'math', 'algebra', 'calculu', 'geometri', 'trigonometr', 
+                          'equation', 'theorem', 'proof'],
+            'statistics': ['statist', 'probabl', 'distribut', 'sampl', 'hypothesi', 'regression', 'analysi'],
+            
+            # Health & Medicine
+            'medicine': ['medicin', 'medic', 'health', 'care', 'clinic', 'hospit', 'treatment', 
+                        'diseas', 'diagnos', 'patient'],
+            'nursing': ['nurs', 'care', 'patient', 'clinic', 'health', 'practi'],
+            'public_health': ['public', 'health', 'epidem', 'pandemic', 'prevent', 'disease', 'vaccin'],
+            'nutrition': ['nutrit', 'diet', 'food', 'eat', 'health', 'vitamin', 'mineral'],
+            
+            # Humanities
+            'history': ['histor', 'histori', 'past', 'ancient', 'medieval', 'modern', 'war', 'revolut'],
+            'philosophy': ['philosoph', 'ethic', 'moral', 'metaphys', 'epistemolog', 'logic', 'reason'],
+            'literature': ['literatur', 'novel', 'fiction', 'poetri', 'poem', 'drama', 'prose', 'narrat'],
+            'linguistics': ['linguist', 'languag', 'grammar', 'syntax', 'phonet', 'semant'],
+            'religion': ['religion', 'faith', 'spiritu', 'church', 'god', 'theolog', 'sacred', 'worship'],
+            
+            # Arts
+            'art': ['art', 'paint', 'sculptor', 'draw', 'aesthet', 'visual', 'galleri', 'museum'],
+            'music': ['music', 'musical', 'song', 'melodi', 'rhythm', 'compos', 'instrument', 'sound'],
+            'theater': ['theater', 'theatr', 'drama', 'play', 'perform', 'stage', 'acting', 'actor'],
+            'film': ['film', 'cinema', 'movi', 'director', 'cinemat', 'screen', 'video'],
+            
+            # Education
+            'education': ['educ', 'teach', 'learn', 'pedagog', 'curriculum', 'school', 'instruct', 
+                         'student', 'classroom'],
+            'higher_education': ['univers', 'colleg', 'academ', 'higher', 'educ', 'faculty', 'campus'],
+            
+            # Law & Justice
+            'law': ['law', 'legal', 'court', 'justic', 'judg', 'attorney', 'lawyer', 'litig', 
+                   'contract', 'statute'],
+            'criminal_justice': ['crimin', 'justic', 'crime', 'polic', 'prison', 'forensic'],
+            
+            # Business & Management
+            'business': ['busi', 'compan', 'corpor', 'firm', 'enterpris', 'commerc', 'industry'],
+            'management': ['manag', 'leader', 'organiz', 'strateg', 'administr', 'executive'],
+            'marketing': ['market', 'advertis', 'brand', 'promot', 'consum', 'custom', 'sale'],
+            'entrepreneurship': ['entrepreneur', 'startup', 'ventur', 'innov', 'founder'],
+            
+            # Engineering
+            'engineering': ['engineer', 'design', 'build', 'construct', 'technical', 'mechan'],
+            'electrical': ['electr', 'circuit', 'power', 'signal', 'electronic'],
+            'civil_engineering': ['civil', 'structur', 'infrastructur', 'build', 'construct', 'bridge'],
+            
+            # Communication & Media
+            'communication': ['commun', 'media', 'journal', 'broadcast', 'press', 'news', 'report'],
+            'social_media': ['social', 'media', 'facebook', 'twitter', 'instagram', 'platform', 'network'],
+            
+            # Geography & Urban Studies
+            'geography': ['geograph', 'map', 'spatial', 'region', 'place', 'location', 'terrain'],
+            'urban_studies': ['urban', 'city', 'metropolitan', 'municipal', 'town', 'plan'],
+            
+            # Agriculture & Food
+            'agriculture': ['agricultur', 'farm', 'crop', 'soil', 'rural', 'harvest'],
+            'food_science': ['food', 'culinary', 'cook', 'cuisin', 'gastronom', 'chef'],
+            
+            # Library & Information Science
+            'library_science': ['librari', 'information', 'catalog', 'bibliograph', 'archiv', 'collection'],
+            
+            # Gender & Diversity Studies
+            'gender_studies': ['gender', 'feminis', 'women', 'masculin', 'queer', 'lgbt'],
+            'diversity': ['divers', 'inclus', 'equity', 'racial', 'ethnic', 'multicultural'],
+        }
+        
+        # Create reverse mapping: term -> group_id
+        term_to_group = {}
+        for group_id, terms in groups.items():
+            for term in terms:
+                if term not in term_to_group:
+                    term_to_group[term] = []
+                term_to_group[term].append(group_id)
+        
+        return {'groups': groups, 'term_to_group': term_to_group}
+    
+    def _get_semantic_matches(self, term):
+        """
+        Get all terms from checkout data that are in the same semantic group as the given term.
+        Returns a list of (matching_term, score, match_type) tuples.
+        """
+        matches = []
+        term_to_group = self.semantic_groups['term_to_group']
+        
+        # Check if term is in any semantic groups
+        if term in term_to_group:
+            groups = term_to_group[term]
+            
+            # Find all terms in the same groups
+            for group_id in groups:
+                group_terms = self.semantic_groups['groups'][group_id]
+                
+                for group_term in group_terms:
+                    if group_term in self.subject_terms:
+                        # Calculate match strength based on group membership
+                        # If terms share multiple groups, they're more related
+                        if group_term in term_to_group:
+                            shared_groups = set(groups) & set(term_to_group[group_term])
+                            match_strength = len(shared_groups) * 0.85  # 85% score per shared group
+                        else:
+                            match_strength = 0.85
+                        
+                        matches.append((group_term, self.subject_terms[group_term], match_strength))
+        
+        return matches
         
     def _build_author_map(self):
         author_map = defaultdict(list)
@@ -85,7 +220,7 @@ class RecommendationScorer:
         return dict(lc_map)
     
     def _extract_subject_terms_enhanced(self):
-        """Enhanced with TF-IDF weighting, hierarchical importance, and n-grams"""
+        """Extract subject terms with TF-IDF weighting, hierarchical importance, and n-grams"""
         all_terms = []
         doc_term_counts = defaultdict(set)
         
@@ -181,7 +316,7 @@ class RecommendationScorer:
         return synonyms
     
     def _calculate_subject_similarity(self, recommendation):
-        """Enhanced similarity with exact matching, fuzzy matching, and better coverage"""
+        """Calculate similarity with exact matching, semantic grouping, fuzzy matching, and coverage weighting"""
         if pd.isna(recommendation.get('subjects')) or not self.subject_terms:
             return 0.0
         
@@ -216,7 +351,16 @@ class RecommendationScorer:
                     if syn in self.subject_terms:
                         max_term_score = max(max_term_score, self.subject_terms[syn])
             
-            # Priority 3: Fuzzy matches (typos, variations)
+            # Priority 3: Semantic group matches (related concepts)
+            if max_term_score == 0:
+                semantic_matches = self._get_semantic_matches(rec_term)
+                if semantic_matches:
+                    # Take the best match from semantic group
+                    for match_term, term_score, match_strength in semantic_matches:
+                        weighted_score = term_score * match_strength
+                        max_term_score = max(max_term_score, weighted_score)
+            
+            # Priority 4: Fuzzy matches (typos, variations)
             if max_term_score == 0:
                 max_term_score = self._fuzzy_match_terms(rec_term)
             
@@ -411,6 +555,10 @@ if checkouts_file and recommendations_file:
         - ✅ Shows your **active/circulating collection**
         - ❌ Does NOT show your **total collection size**
         - 💡 Use this to understand which parts of your collection are being used
+        
+        **Two views available:**
+        - **Total Circulation:** Which LC classifications see the most activity overall
+        - **Average Checkouts:** Which areas have the highest demand per book
         """)
         
         # Prepare LC classification data
@@ -485,7 +633,7 @@ if checkouts_file and recommendations_file:
             lc_stats['Subject Area'] = lc_stats.index.map(lambda x: lc_names.get(x, 'Other'))
             
             # Create tabs for different visualizations
-            tab1, tab2, tab3 = st.tabs(["📊 Total Circulation", "📈 Average Checkouts", "📚 Books with Checkouts"])
+            tab1, tab2 = st.tabs(["📊 Total Circulation", "📈 Average Checkouts"])
             
             with tab1:
                 st.subheader("Top LC Classifications by Total Checkouts")
@@ -564,43 +712,6 @@ if checkouts_file and recommendations_file:
                 st.write("**Detailed Breakdown:**")
                 display_avg = lc_meaningful[['Subject Area', 'Avg Checkouts', 'Total Checkouts', 'Number of Books']]
                 st.dataframe(display_avg, use_container_width=True)
-            
-            with tab3:
-                st.subheader("Books with Checkouts by LC Classification")
-                st.markdown("*How many books circulated in each subject area?*")
-                st.warning("⚠️ **Important:** This shows only books that were checked out during your data period. This is NOT your total collection size - it's your **active/circulating collection**. Books that were never checked out are not included in this data.")
-                
-                # Sort by number of books
-                lc_by_size = lc_stats.sort_values('Number of Books', ascending=False).head(15).reset_index()
-                
-                fig3 = go.Figure(data=[
-                    go.Bar(
-                        x=lc_by_size['lc_prefix'],
-                        y=lc_by_size['Number of Books'],
-                        text=lc_by_size['Number of Books'],
-                        textposition='auto',
-                        marker_color='#ff7f0e',
-                        hovertemplate='<b>%{x}</b><br>' +
-                                      'Number of Books: %{y}<br>' +
-                                      '<extra></extra>'
-                    )
-                ])
-                
-                fig3.update_layout(
-                    title="Top 15 LC Classifications by Books with Checkouts",
-                    xaxis_title="LC Classification",
-                    yaxis_title="Number of Books (that circulated)",
-                    height=500,
-                    showlegend=False,
-                    hovermode='x'
-                )
-                
-                st.plotly_chart(fig3, use_container_width=True)
-                
-                # Show table
-                st.write("**Detailed Breakdown:**")
-                display_size = lc_by_size.set_index('lc_prefix')[['Subject Area', 'Number of Books', 'Total Checkouts', 'Avg Checkouts']]
-                st.dataframe(display_size, use_container_width=True)
             
             # Summary statistics
             col1, col2, col3, col4 = st.columns(4)
