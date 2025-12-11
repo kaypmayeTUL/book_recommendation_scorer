@@ -6,6 +6,7 @@ import numpy as np
 import nltk
 from nltk.stem import SnowballStemmer
 from nltk.corpus import wordnet
+import plotly.graph_objects as go
 import io
 
 # Download required NLTK data
@@ -393,6 +394,229 @@ if checkouts_file and recommendations_file:
                 st.write("**Recommendations Data:**")
                 st.dataframe(recommendations_df.head())
         
+        # NEW: Collection Insights with Visualizations
+        st.header("📊 Collection Insights")
+        
+        st.info("""
+        **📖 About This Data:** These insights are based on your checkout data file, which contains only books that were 
+        checked out at least once during your data period. Books with zero checkouts are not included. 
+        
+        This means:
+        - ✅ Shows your **active/circulating collection**
+        - ❌ Does NOT show your **total collection size**
+        - 💡 Use this to understand which parts of your collection are being used
+        """)
+        
+        # Prepare LC classification data
+        def extract_lc_prefix(lc_class):
+            if pd.isna(lc_class):
+                return None
+            lc_str = str(lc_class).strip().upper()
+            match = re.match(r'^([A-Z]{1,3})', lc_str)
+            return match.group(1) if match else None
+        
+        checkouts_df['lc_prefix'] = checkouts_df['lc_classification'].apply(extract_lc_prefix)
+        
+        # Filter out records without LC classification
+        checkouts_with_lc = checkouts_df[checkouts_df['lc_prefix'].notna()].copy()
+        
+        if len(checkouts_with_lc) > 0:
+            # Calculate statistics by LC class
+            lc_stats = checkouts_with_lc.groupby('lc_prefix').agg({
+                'checkouts': ['sum', 'mean', 'count']
+            }).round(1)
+            lc_stats.columns = ['Total Checkouts', 'Avg Checkouts', 'Number of Books']
+            lc_stats = lc_stats.sort_values('Total Checkouts', ascending=False)
+            
+            # LC Classification names dictionary (common ones)
+            lc_names = {
+                'A': 'General Works',
+                'B': 'Philosophy, Psychology, Religion',
+                'BF': 'Psychology',
+                'BL': 'Religion',
+                'C': 'History - Auxiliary Sciences',
+                'D': 'World History',
+                'E': 'American History',
+                'F': 'American History (Local)',
+                'G': 'Geography, Anthropology',
+                'H': 'Social Sciences',
+                'HB': 'Economics',
+                'HC': 'Economic History',
+                'HM': 'Sociology',
+                'HV': 'Social Welfare',
+                'J': 'Political Science',
+                'K': 'Law',
+                'L': 'Education',
+                'M': 'Music',
+                'N': 'Fine Arts',
+                'P': 'Language and Literature',
+                'PA': 'Classical Literature',
+                'PE': 'English Language',
+                'PQ': 'Romance Literature',
+                'PR': 'English Literature',
+                'PS': 'American Literature',
+                'Q': 'Science',
+                'QA': 'Mathematics',
+                'QB': 'Astronomy',
+                'QC': 'Physics',
+                'QD': 'Chemistry',
+                'QE': 'Geology',
+                'QH': 'Natural History, Biology',
+                'QK': 'Botany',
+                'QL': 'Zoology',
+                'QP': 'Physiology',
+                'R': 'Medicine',
+                'S': 'Agriculture',
+                'T': 'Technology',
+                'TA': 'Engineering',
+                'TK': 'Electrical Engineering',
+                'U': 'Military Science',
+                'V': 'Naval Science',
+                'Z': 'Bibliography, Library Science'
+            }
+            
+            # Add LC class names
+            lc_stats['Subject Area'] = lc_stats.index.map(lambda x: lc_names.get(x, 'Other'))
+            
+            # Create tabs for different visualizations
+            tab1, tab2, tab3 = st.tabs(["📊 Total Circulation", "📈 Average Checkouts", "📚 Books with Checkouts"])
+            
+            with tab1:
+                st.subheader("Top LC Classifications by Total Checkouts")
+                st.markdown("*Which subject areas see the most circulation overall?*")
+                st.info("📌 **Note:** This shows only books that were checked out at least once during your data period. Books with zero checkouts are not included in this analysis.")
+                
+                # Bar chart - Top 15
+                top_lc = lc_stats.head(15).reset_index()
+                
+                import plotly.graph_objects as go
+                fig1 = go.Figure(data=[
+                    go.Bar(
+                        x=top_lc['lc_prefix'],
+                        y=top_lc['Total Checkouts'],
+                        text=top_lc['Total Checkouts'],
+                        textposition='auto',
+                        marker_color='#1f77b4',
+                        hovertemplate='<b>%{x}</b><br>' +
+                                      'Total Checkouts: %{y}<br>' +
+                                      '<extra></extra>'
+                    )
+                ])
+                
+                fig1.update_layout(
+                    title="Top 15 LC Classifications by Total Circulation",
+                    xaxis_title="LC Classification",
+                    yaxis_title="Total Checkouts",
+                    height=500,
+                    showlegend=False,
+                    hovermode='x'
+                )
+                
+                st.plotly_chart(fig1, use_container_width=True)
+                
+                # Show table
+                st.write("**Detailed Breakdown:**")
+                display_stats = lc_stats.head(15)[['Subject Area', 'Total Checkouts', 'Avg Checkouts', 'Number of Books']]
+                st.dataframe(display_stats, use_container_width=True)
+            
+            with tab2:
+                st.subheader("LC Classifications by Average Checkouts per Book")
+                st.markdown("*Which subject areas have the highest demand per book?*")
+                st.info("📌 **Note:** Averages calculated only for books that circulated. Books with zero checkouts are not included.")
+                
+                # Only show LC classes with at least 3 books for meaningful averages
+                lc_meaningful = lc_stats[lc_stats['Number of Books'] >= 3].sort_values('Avg Checkouts', ascending=False).head(15)
+                lc_meaningful_reset = lc_meaningful.reset_index()
+                
+                fig2 = go.Figure(data=[
+                    go.Bar(
+                        x=lc_meaningful_reset['lc_prefix'],
+                        y=lc_meaningful_reset['Avg Checkouts'],
+                        text=lc_meaningful_reset['Avg Checkouts'].round(1),
+                        textposition='auto',
+                        marker_color='#2ca02c',
+                        hovertemplate='<b>%{x}</b><br>' +
+                                      'Avg Checkouts: %{y:.1f}<br>' +
+                                      '<extra></extra>'
+                    )
+                ])
+                
+                fig2.update_layout(
+                    title="Top 15 LC Classifications by Average Checkouts per Book",
+                    xaxis_title="LC Classification",
+                    yaxis_title="Average Checkouts per Book",
+                    height=500,
+                    showlegend=False,
+                    hovermode='x'
+                )
+                
+                st.plotly_chart(fig2, use_container_width=True)
+                
+                st.info("📌 Only showing LC classes with 3+ books for meaningful averages")
+                
+                # Show table
+                st.write("**Detailed Breakdown:**")
+                display_avg = lc_meaningful[['Subject Area', 'Avg Checkouts', 'Total Checkouts', 'Number of Books']]
+                st.dataframe(display_avg, use_container_width=True)
+            
+            with tab3:
+                st.subheader("Books with Checkouts by LC Classification")
+                st.markdown("*How many books circulated in each subject area?*")
+                st.warning("⚠️ **Important:** This shows only books that were checked out during your data period. This is NOT your total collection size - it's your **active/circulating collection**. Books that were never checked out are not included in this data.")
+                
+                # Sort by number of books
+                lc_by_size = lc_stats.sort_values('Number of Books', ascending=False).head(15).reset_index()
+                
+                fig3 = go.Figure(data=[
+                    go.Bar(
+                        x=lc_by_size['lc_prefix'],
+                        y=lc_by_size['Number of Books'],
+                        text=lc_by_size['Number of Books'],
+                        textposition='auto',
+                        marker_color='#ff7f0e',
+                        hovertemplate='<b>%{x}</b><br>' +
+                                      'Number of Books: %{y}<br>' +
+                                      '<extra></extra>'
+                    )
+                ])
+                
+                fig3.update_layout(
+                    title="Top 15 LC Classifications by Books with Checkouts",
+                    xaxis_title="LC Classification",
+                    yaxis_title="Number of Books (that circulated)",
+                    height=500,
+                    showlegend=False,
+                    hovermode='x'
+                )
+                
+                st.plotly_chart(fig3, use_container_width=True)
+                
+                # Show table
+                st.write("**Detailed Breakdown:**")
+                display_size = lc_by_size.set_index('lc_prefix')[['Subject Area', 'Number of Books', 'Total Checkouts', 'Avg Checkouts']]
+                st.dataframe(display_size, use_container_width=True)
+            
+            # Summary statistics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("LC Classes Represented", len(lc_stats))
+            with col2:
+                top_lc_name = lc_stats.index[0]
+                st.metric("Most Active LC Class", top_lc_name)
+            with col3:
+                total_with_lc = lc_stats['Total Checkouts'].sum()
+                st.metric("Total Checkouts", f"{int(total_with_lc):,}")
+            with col4:
+                pct_with_lc = (len(checkouts_with_lc) / len(checkouts_df)) * 100
+                st.metric("Books with LC Data", f"{pct_with_lc:.1f}%")
+            
+            st.caption("💡 Remember: These metrics reflect your **circulating collection** (books with ≥1 checkout), not your entire collection.")
+            
+        else:
+            st.warning("⚠️ No LC classification data found in checkout records. Add LC classifications for better insights!")
+        
+        st.divider()
+        
         # Scoring configuration
         st.header("⚙️ Step 2: Configure Scoring Weights")
         st.markdown("Adjust how much each factor contributes to the final score:")
@@ -543,6 +767,13 @@ with st.sidebar:
     3. Adjust scoring weights (optional)
     4. Click **Score Recommendations**
     5. Download your results!
+    
+    ### 📊 Collection Insights:
+    
+    **Important:** The insights show only books 
+    that were checked out during your data period.
+    This is your **active collection**, not your 
+    total collection size.
     
     ### Interpreting Scores:
     
