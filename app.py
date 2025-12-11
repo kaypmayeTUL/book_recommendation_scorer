@@ -31,8 +31,10 @@ st.set_page_config(
 
 # Header
 st.title("📚 Library Book Recommendation Scorer")
+st.success("🎯 **Enhanced Version** - Now with improved subject matching!")
 st.markdown("""
 This tool helps you **score and rank book recommendations** based on how well they match your library's checkout history.
+
 
 ### How it works:
 1. Upload your **checkout history** (CSV with title, author, checkouts, subjects, LC classification)
@@ -43,14 +45,18 @@ This tool helps you **score and rank book recommendations** based on how well th
    - Author popularity (20%)
 """)
 
-# Recommendation Scorer Class (from the notebook)
+# Recommendation Scorer Class (ENHANCED VERSION)
 class RecommendationScorer:
     def __init__(self, checkouts_df):
         self.checkouts_df = checkouts_df
         self.stemmer = SnowballStemmer('english')
         self.author_checkout_map = self._build_author_map()
         self.lc_checkout_map = self._build_lc_map()
-        self.subject_terms = self._extract_subject_terms()
+        
+        # NEW: Enhanced subject analysis with TF-IDF weighting
+        self.subject_terms = self._extract_subject_terms_enhanced()
+        self.term_frequencies = self._calculate_term_frequencies()
+        self.total_docs = len(checkouts_df)
         
     def _build_author_map(self):
         author_map = defaultdict(list)
@@ -70,21 +76,72 @@ class RecommendationScorer:
                     lc_map[lc_prefix].append(row.get('checkouts', 0))
         return dict(lc_map)
     
-    def _extract_subject_terms(self):
+    def _extract_subject_terms_enhanced(self):
+        """Enhanced with TF-IDF weighting, hierarchical importance, and n-grams"""
         all_terms = []
-        for _, row in self.checkouts_df.iterrows():
+        doc_term_counts = defaultdict(set)
+        
+        for idx, row in self.checkouts_df.iterrows():
             if pd.notna(row.get('subjects')):
                 subjects = str(row['subjects']).split(';')
                 checkouts = row.get('checkouts', 0)
-                for subject in subjects:
+                
+                for i, subject in enumerate(subjects):
+                    # Hierarchical weighting: first subject is primary
+                    hierarchy_weight = 1.0 if i == 0 else 0.7
+                    
+                    # Extract both terms and bigrams
                     terms = self._tokenize_and_stem(subject)
-                    all_terms.extend([(term, checkouts) for term in terms])
+                    bigrams = self._extract_bigrams(subject)
+                    all_terms_in_subject = terms + bigrams
+                    
+                    for term in all_terms_in_subject:
+                        weighted_checkouts = checkouts * hierarchy_weight
+                        all_terms.append((term, weighted_checkouts))
+                        doc_term_counts[term].add(idx)
         
+        # Calculate TF-IDF weighted scores
         term_checkouts = defaultdict(list)
         for term, checkout_count in all_terms:
             term_checkouts[term].append(checkout_count)
         
-        return {term: sum(counts)/len(counts) for term, counts in term_checkouts.items()}
+        term_scores = {}
+        for term, counts in term_checkouts.items():
+            avg_checkouts = sum(counts) / len(counts)
+            
+            # IDF: Rare terms are more distinctive
+            docs_with_term = len(doc_term_counts[term])
+            idf = np.log(self.total_docs / (1 + docs_with_term))
+            
+            # Combine popularity with specificity
+            term_scores[term] = avg_checkouts * (1 + idf * 0.3)
+        
+        return term_scores
+    
+    def _extract_bigrams(self, text):
+        """Extract 2-word phrases (e.g., 'machine learning', 'climate change')"""
+        if pd.isna(text):
+            return []
+        
+        text_clean = re.sub(r'[^\w\s]', ' ', str(text).lower())
+        words = [w for w in text_clean.split() if len(w) > 2]
+        
+        bigrams = []
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]}_{words[i+1]}"
+            bigrams.append(bigram)
+        
+        return bigrams
+    
+    def _calculate_term_frequencies(self):
+        """Calculate term frequency across collection"""
+        from collections import Counter
+        term_freq = Counter()
+        for _, row in self.checkouts_df.iterrows():
+            if pd.notna(row.get('subjects')):
+                terms = self._tokenize_and_stem(row['subjects'])
+                term_freq.update(terms)
+        return term_freq
     
     def _clean_author(self, author):
         if pd.isna(author):
@@ -116,24 +173,44 @@ class RecommendationScorer:
         return synonyms
     
     def _calculate_subject_similarity(self, recommendation):
+        """Enhanced similarity with exact matching, fuzzy matching, and better coverage"""
         if pd.isna(recommendation.get('subjects')) or not self.subject_terms:
             return 0.0
         
+        # Extract terms and bigrams from recommendation
         rec_terms = self._tokenize_and_stem(recommendation['subjects'])
-        if not rec_terms:
+        rec_bigrams = self._extract_bigrams(recommendation['subjects'])
+        all_rec_terms = rec_terms + rec_bigrams
+        
+        if not all_rec_terms:
             return 0.0
         
         total_score = 0
         matched_terms = 0
+        exact_matches = 0
         
-        for rec_term in rec_terms:
-            rec_syns = self._get_synonyms(rec_term)
+        for rec_term in all_rec_terms:
+            rec_syns = self._get_synonyms(rec_term.replace('_', ' '))
             rec_syns.add(rec_term)
             
             max_term_score = 0
-            for syn in rec_syns:
-                if syn in self.subject_terms:
-                    max_term_score = max(max_term_score, self.subject_terms[syn])
+            is_exact_match = False
+            
+            # Priority 1: Exact matches (boosted)
+            if rec_term in self.subject_terms:
+                max_term_score = self.subject_terms[rec_term] * 1.5  # 50% boost
+                is_exact_match = True
+                exact_matches += 1
+            
+            # Priority 2: Synonym matches
+            if max_term_score == 0:
+                for syn in rec_syns:
+                    if syn in self.subject_terms:
+                        max_term_score = max(max_term_score, self.subject_terms[syn])
+            
+            # Priority 3: Fuzzy matches (typos, variations)
+            if max_term_score == 0:
+                max_term_score = self._fuzzy_match_terms(rec_term)
             
             if max_term_score > 0:
                 matched_terms += 1
@@ -145,10 +222,27 @@ class RecommendationScorer:
         avg_checkouts = total_score / matched_terms
         max_checkouts = max(self.subject_terms.values()) if self.subject_terms else 1
         
-        coverage = matched_terms / len(rec_terms)
+        # Improved coverage weighting
+        coverage = matched_terms / len(all_rec_terms)
+        exact_match_ratio = exact_matches / len(all_rec_terms) if len(all_rec_terms) > 0 else 0
+        coverage_weight = 0.6 + 0.4 * coverage + 0.2 * exact_match_ratio
+        coverage_weight = min(coverage_weight, 1.0)
+        
         normalized_score = (avg_checkouts / max_checkouts) * 100
         
-        return normalized_score * (0.7 + 0.3 * coverage)
+        return normalized_score * coverage_weight
+    
+    def _fuzzy_match_terms(self, term, threshold=0.85):
+        """Fuzzy matching to handle typos and variations"""
+        from difflib import SequenceMatcher
+        
+        max_score = 0
+        for existing_term in self.subject_terms:
+            similarity = SequenceMatcher(None, term, existing_term).ratio()
+            if similarity >= threshold:
+                max_score = max(max_score, self.subject_terms[existing_term])
+        
+        return max_score
     
     def _calculate_lc_score(self, recommendation):
         if pd.isna(recommendation.get('lc_classification')) or not self.lc_checkout_map:
